@@ -1,0 +1,28 @@
+### Core app
+streamlit==1.38.0
+python-dotenv==1.0.1
+pydantic==2.9.2
+
+### LangChain (current, non-deprecated packages)
+langchain==0.3.7
+langchain-core==0.3.15
+langchain-text-splitters==0.3.2
+langchain-ollama==0.2.0
+langchain-huggingface==0.1.2
+langchain-chroma==0.1.4
+
+### Vector store
+chromadb==0.5.20
+
+### Local embeddings
+sentence-transformers==3.2.1
+
+### PDF ingestion
+pypdf==5.1.0
+
+### HTTP (Ollama health check)
+requests==2.32.3
+
+### Testing
+pytest==8.3.3
+pytest-mock==3.14.0

@@ -1,0 +1,14 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+.env
+data/raw/*.pdf
+data/processed/*
+vectorstore/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+!vectorstore/.gitkeep
+.pytest_cache/
+.DS_Store
+*.egg-info/
