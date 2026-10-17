@@ -4,8 +4,14 @@ A **local-first Retrieval-Augmented Generation (RAG)** application that ingests 
 volumes of unstructured FinTech / digital-payments research (500+ pages of PDFs),
 indexes it into a persistent vector database, and uses a **locally running Mistral
 model via Ollama** to answer questions, generate structured consumer insights, and
-produce full Markdown research reports — all **without sending any document content,
-question, or generated output to a cloud LLM API**.
+produce full Markdown research reports. In the default local mode this happens
+**without sending any document content, question, or generated output to a cloud LLM
+API**.
+
+An optional **hosted mode** (`LLM_PROVIDER=gemini`) uses the Google Gemini API for
+generation instead, e.g. for a Streamlit Community Cloud deployment where Ollama is
+not available. Hosted mode is **not fully local**: see
+[Hosted mode with Gemini](#14-hosted-mode-with-gemini-optional) for exactly what is sent.
 
 ---
 
@@ -20,7 +26,8 @@ corpus into a queryable knowledge base:
 3. **Embed** each chunk locally (Sentence-Transformers) and store it in **ChromaDB**.
 4. **Retrieve** the most relevant chunks for a question via semantic search.
 5. **Generate** an evidence-grounded answer, structured insight, or full report using
-   **Mistral running locally through Ollama** — never a cloud LLM.
+   **Mistral running locally through Ollama** (default), or the hosted Gemini API if
+   `LLM_PROVIDER=gemini` is set.
 
 Every generated claim is required (by prompt design) to cite a document name and page
 number that actually appears in the retrieved context, and the model is explicitly
@@ -92,13 +99,17 @@ The Streamlit UI (`streamlit_app.py`) is a thin presentation layer over these mo
   never sent to the LLM at once).
 - **Streamlit UI** with Dashboard, Document Ingestion, Semantic Search, Ask the
   Research Assistant, Generate Insights, and Generate Report tabs.
-- **Graceful Ollama-unavailable handling** everywhere the LLM is called.
+- **Graceful provider-unavailable handling** everywhere the LLM is called, with
+  specific messages for an unreachable server, a missing model, a timeout, or a
+  misconfigured provider.
+- **Optional hosted generation via Gemini** (`LLM_PROVIDER=gemini`), using the same
+  prompts, retrieval, citations, and output formats as the local mode.
 
 ## 4. Technology Stack
 
 | Layer            | Technology                                                        |
 |-------------------|--------------------------------------------------------------------|
-| LLM inference     | [Ollama](https://ollama.com) running **Mistral** locally           |
+| LLM inference     | [Ollama](https://ollama.com) running **Mistral** locally (default); optional hosted [Gemini API](https://ai.google.dev/gemini-api/docs) via `google-genai` |
 | RAG orchestration | LangChain (`langchain`, `langchain-core`, `langchain-text-splitters`, `langchain-ollama`, `langchain-huggingface`, `langchain-chroma`) |
 | Embeddings        | Sentence-Transformers (`sentence-transformers/all-MiniLM-L6-v2` by default) |
 | Vector database   | ChromaDB (persisted on disk)                                       |
@@ -109,12 +120,12 @@ The Streamlit UI (`streamlit_app.py`) is a thin presentation layer over these mo
 
 ## 5. Why Local LLM / RAG?
 
-Consumer research documents are frequently sensitive or under NDA. A local-first
-architecture means:
+Consumer research documents are frequently sensitive or under NDA. The default
+local-first mode (`LLM_PROVIDER=ollama`) means:
 
 - Documents, retrieved passages, questions, and generated insights **never leave the
   machine** — no OpenAI/Gemini/cloud API call is made for inference or embeddings.
-- No API key is required to run the core application.
+- No API key is required to run the application.
 - Retrieval (RAG) keeps the 500+ page corpus out of the LLM's context window —
   only the top-k most relevant chunks are ever sent to Mistral for a given
   question, insight, or report section.
@@ -210,6 +221,10 @@ cp .env.example .env
 
 | Variable                | Default                                            | Purpose |
 |--------------------------|-----------------------------------------------------|---------|
+| `LLM_PROVIDER`           | `ollama`                                             | `ollama` (local) or `gemini` (hosted Google Gemini API) |
+| `GEMINI_API_KEY`         | _(empty)_                                            | Gemini API key; required only when `LLM_PROVIDER=gemini`. Never commit it. |
+| `GEMINI_MODEL`           | `gemini-3.8-flash`                                   | Gemini model ID, e.g. `gemini-3.5-flash-lite` for lower cost |
+| `GEMINI_REQUEST_TIMEOUT` | `120`                                                | Seconds before a Gemini request times out |
 | `OLLAMA_BASE_URL`        | `http://localhost:11434`                            | Ollama server URL |
 | `OLLAMA_MODEL`           | `mistral`                                            | Model tag to use for generation |
 | `OLLAMA_TEMPERATURE`     | `0.1`                                                | Generation temperature |
@@ -262,7 +277,52 @@ streamlit run streamlit_app.py
 
 Then open the URL Streamlit prints (typically `http://localhost:8501`).
 
-## 14. Example Research Questions
+**Running locally with Ollama** is the default and needs no API key: start Ollama
+(section 7), make sure `ollama list` shows your model, leave `LLM_PROVIDER` unset (or
+set it to `ollama`), and run the command above.
+
+## 14. Hosted Mode with Gemini (Optional)
+
+Use this when the app runs somewhere Ollama is not available, such as Streamlit
+Community Cloud. Selecting Gemini does **not** require an Ollama server.
+
+> **Privacy:** in hosted mode, each generation request sends **the user's question or
+> topic and the retrieved document passages** (up to `MAX_CONTEXT_CHARS` per request,
+> with their file names and page numbers) to Google's Gemini API. Full PDFs are not
+> uploaded, and embeddings and the vector store stay on the server running the app —
+> but this mode is **not fully local**. Check that your documents may be shared with
+> Google under the [Gemini API terms](https://ai.google.dev/gemini-api/terms) before
+> enabling it. The Dashboard's status check only looks up the model's metadata and
+> sends no document content.
+
+1. Create an API key in [Google AI Studio](https://aistudio.google.com/apikey).
+2. Configure the app:
+
+   **Locally or on your own server** — in `.env` (git-ignored) or the environment:
+   ```
+   LLM_PROVIDER=gemini
+   GEMINI_API_KEY=your-key-here
+   GEMINI_MODEL=gemini-3.8-flash
+   ```
+
+   **On Streamlit Community Cloud** — open your app's **Settings → Secrets** and add:
+   ```toml
+   LLM_PROVIDER = "gemini"
+   GEMINI_API_KEY = "your-key-here"
+   GEMINI_MODEL = "gemini-3.8-flash"
+   ```
+   For local testing of secrets, copy `.streamlit/secrets.toml.example` to
+   `.streamlit/secrets.toml` (git-ignored). Environment variables take precedence
+   over Streamlit secrets.
+
+3. Open the Dashboard: it should show "Gemini API: Connected". A rejected key, an
+   unavailable model, or an exceeded quota is reported there and in each workflow.
+
+The API key is never logged or displayed, and is excluded from the settings object's
+`repr`. Model IDs change over time; see the
+[Gemini models page](https://ai.google.dev/gemini-api/docs/models) for current ones.
+
+## 15. Example Research Questions
 
 - "What factors influence digital wallet adoption?"
 - "What are the main barriers to mobile payment adoption?"
@@ -270,9 +330,10 @@ Then open the URL Streamlit prints (typically `http://localhost:8501`).
 - "What differences exist between younger and older consumers?"
 - "What role does transaction fee transparency play in payment method choice?"
 
-## 15. Running Tests
+## 16. Running Tests
 
-Unit tests (no Ollama required — the LLM is mocked):
+Unit tests (no Ollama or Gemini API key required — the LLMs are mocked and no live API
+calls are made):
 
 ```bash
 pytest -m "not integration" -v
@@ -285,10 +346,14 @@ installed):
 pytest tests/test_integration_ollama.py -m integration -v
 ```
 
-## 16. Troubleshooting
+## 17. Troubleshooting
 
 | Symptom | Fix |
 |---|---|
+| "LLM_PROVIDER is set to 'gemini' but GEMINI_API_KEY is not set" | Add the key to `.env`/the environment, or to Streamlit secrets on Community Cloud. |
+| "Gemini rejected the API key" | Check the key in Google AI Studio and that it has no extra spaces. |
+| "Gemini model ... was not found" | Set `GEMINI_MODEL` to a current model ID from the Gemini models page. |
+| "Unsupported LLM_PROVIDER" | Set `LLM_PROVIDER` to `ollama` or `gemini`. |
 | Dashboard shows "Ollama connection: Unreachable" | Start Ollama (`ollama serve`) and confirm `OLLAMA_BASE_URL` matches where it's running. |
 | Dashboard shows the model is not available | Run `ollama list` to see installed models, then `ollama pull mistral` or set `OLLAMA_MODEL` to match your installed tag. |
 | "No relevant passages found" in Search | Build the index first from the **Document Ingestion** tab. |
@@ -296,7 +361,7 @@ pytest tests/test_integration_ollama.py -m integration -v
 | Embedding step is slow on first run | The Sentence-Transformers model weights are downloading; subsequent runs use the local cache. |
 | Answers say "does not contain enough information" | This is expected/correct behavior when the corpus doesn't cover the question — it means the grounding prompt is working. |
 
-## 17. Limitations
+## 18. Limitations
 
 - Retrieval quality depends on the embedding model and chunking configuration; very
   short or very technical passages may retrieve imperfectly with the default
@@ -304,10 +369,11 @@ pytest tests/test_integration_ollama.py -m integration -v
 - No OCR is performed on scanned PDFs — text must already be extractable.
 - The relevance score shown is a simple normalized-distance approximation for
   display/ranking, not a calibrated probability.
-- Report generation makes multiple sequential local LLM calls (one per section),
-  so full reports can take a few minutes depending on your hardware.
+- Report generation makes multiple sequential LLM calls (one per section), so full
+  reports can take a few minutes depending on your hardware (or, in hosted mode, on
+  Gemini latency and rate limits).
 
-## 18. Future Improvements
+## 19. Future Improvements
 
 - Optional OCR pipeline (e.g. `pytesseract`) for scanned documents.
 - Hybrid retrieval (BM25 + semantic) for improved recall on keyword-heavy queries.
@@ -316,17 +382,33 @@ pytest tests/test_integration_ollama.py -m integration -v
 - Swap-in support for other local models served by Ollama (e.g. Llama, Qwen) via
   `OLLAMA_MODEL` with no code changes.
 
-## 19. Security / Privacy
+## 20. Security / Privacy
+
+**Local mode (`LLM_PROVIDER=ollama`, the default):**
 
 - No PDFs, retrieved passages, questions, or generated content are sent to any cloud
   LLM API (OpenAI, Gemini, or otherwise).
-- No API key is required or used by the core application.
-- All inference happens through your local Ollama server; all embeddings happen
-  through a locally loaded Sentence-Transformers model.
+- No API key is required or used.
+- All inference happens through your local Ollama server.
+
+**Hosted mode (`LLM_PROVIDER=gemini`):**
+
+- Questions/topics and the retrieved document passages used for each generation
+  request (with file names and page numbers) are sent to Google's Gemini API, and
+  Gemini's responses come back over the network. This mode is not fully local.
+- Full PDFs, the vector store, and embeddings are never sent.
+- `GEMINI_API_KEY` is read from the environment, `.env`, or Streamlit secrets; it is
+  never hardcoded, logged, or displayed. `.env` and `.streamlit/secrets.toml` are
+  git-ignored.
+
+**Both modes:**
+
+- All embeddings are computed by a locally loaded Sentence-Transformers model, and
+  ChromaDB telemetry is disabled.
 - Logging avoids printing full document contents; only counts, file names, and page
   numbers are logged by default.
 
-## 20. Project Structure
+## 21. Project Structure
 
 ```
 fintech-consumer-insight-engine/
@@ -339,7 +421,9 @@ fintech-consumer-insight-engine/
 │   ├── embeddings.py       # local HuggingFace/Sentence-Transformers embeddings
 │   ├── vector_store.py     # ChromaDB persistence, incremental indexing
 │   ├── retriever.py        # semantic search over the vector store
-│   ├── llm.py               # Ollama chat model + connection health check
+│   ├── llm.py               # provider selection, health checks, error messages
+│   ├── gemini.py            # optional hosted Gemini adapter (google-genai)
+│   ├── indexing.py          # ingest -> chunk -> sync the vector store
 │   ├── rag_chain.py         # retrieval -> grounded prompt -> Mistral -> answer
 │   ├── insights.py          # structured Consumer Insight Engine
 │   ├── reporting.py         # section-by-section Markdown report generation
@@ -359,8 +443,13 @@ fintech-consumer-insight-engine/
 │   ├── test_prompts.py
 │   ├── test_insights.py
 │   ├── test_vector_store.py
+│   ├── test_index_sync.py
+│   ├── test_uploads.py
+│   ├── test_llm.py
+│   ├── test_providers.py
 │   └── test_integration_ollama.py   # optional, requires live Ollama
 │
+├── .streamlit/secrets.toml.example
 ├── .env.example
 ├── .gitignore
 ├── requirements.txt

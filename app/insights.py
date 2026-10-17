@@ -147,9 +147,8 @@ class InsightEngine:
         context = format_context(passages, self.settings.max_context_chars)
         prompt = build_insight_prompt(topic=topic, context=context)
 
-        llm = self._get_llm()
         try:
-            raw_response = llm.invoke(prompt)
+            raw_response = self._get_llm().invoke(prompt)
         except Exception as exc:  # noqa: BLE001
             from app.llm import describe_llm_error
 

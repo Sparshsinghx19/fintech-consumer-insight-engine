@@ -11,6 +11,10 @@ langchain-ollama==0.2.0
 langchain-huggingface==0.1.2
 langchain-chroma==0.1.4
 
+### Optional hosted LLM provider (LLM_PROVIDER=gemini)
+# Google's current Gemini SDK, used directly (see app/gemini.py).
+google-genai==2.8.0
+
 ### Vector store
 chromadb==0.5.20
 

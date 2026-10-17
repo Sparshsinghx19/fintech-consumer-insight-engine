@@ -9,6 +9,7 @@ the app runnable out of the box for local development.
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -29,6 +30,34 @@ def _get_int(name: str, default: int) -> int:
         raise ValueError(f"Environment variable {name}='{raw}' is not a valid integer.")
 
 
+def _streamlit_secret(name: str) -> str | None:
+    """Read `name` from Streamlit secrets (`st.secrets`), which is how
+    Streamlit Community Cloud provides configuration. Only consulted when
+    Streamlit is already loaded, so tests and scripts never import it, and
+    any missing secrets file is treated as "not set"."""
+    st = sys.modules.get("streamlit")
+    if st is None:
+        return None
+    try:
+        # Without a secrets.toml, plain `st.secrets.get` renders a "No secrets
+        # found" error element into the page; load quietly first.
+        load_quietly = getattr(st.secrets, "load_if_toml_exists", None)
+        if load_quietly is not None and not load_quietly():
+            return None
+        value = st.secrets.get(name)
+    except Exception:  # noqa: BLE001 - no secrets.toml, parse errors, etc.
+        return None
+    return str(value).strip() if value else None
+
+
+def _get_env_or_secret(name: str, default: str) -> str:
+    """Environment variable (or .env) first, then Streamlit secrets."""
+    raw = os.getenv(name)
+    if raw is not None and raw.strip():
+        return raw.strip()
+    return _streamlit_secret(name) or default
+
+
 def _get_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name)
     if raw is None or raw.strip() == "":
@@ -38,6 +67,16 @@ def _get_bool(name: str, default: bool) -> bool:
 
 @dataclass(frozen=True)
 class Settings:
+    # --- LLM provider ---
+    # "ollama" (default, fully local) or "gemini" (hosted Google Gemini API).
+    llm_provider: str = field(default_factory=lambda: _get_env_or_secret("LLM_PROVIDER", "ollama").lower())
+
+    # --- Gemini (only used when llm_provider == "gemini") ---
+    # repr=False keeps the key out of logs, tracebacks, and debug output.
+    gemini_api_key: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_API_KEY", ""), repr=False)
+    gemini_model: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_MODEL", "gemini-3.8-flash"))
+    gemini_request_timeout: int = field(default_factory=lambda: _get_int("GEMINI_REQUEST_TIMEOUT", 120))
+
     # --- Ollama / LLM ---
     ollama_base_url: str = field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))
     ollama_model: str = field(default_factory=lambda: os.getenv("OLLAMA_MODEL", "mistral"))

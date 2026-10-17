@@ -72,9 +72,8 @@ class ReportGenerator:
         passages = self.retriever.search(query, k=k)
         context = format_context(passages, self.settings.max_context_chars)
         prompt = build_report_section_prompt(section_title=section_title, topic=topic, context=context)
-        llm = self._get_llm()
         try:
-            response = llm.invoke(prompt)
+            response = self._get_llm().invoke(prompt)
             text = _extract_text(response).strip()
         except Exception as exc:  # noqa: BLE001
             from app.llm import describe_llm_error
@@ -94,7 +93,9 @@ class ReportGenerator:
         lines: List[str] = []
         lines.append(f"# FinTech Consumer Insight Report: {topic}")
         lines.append("")
-        lines.append(f"*Generated {generated_at} — local Mistral model via Ollama, evidence-grounded RAG pipeline.*")
+        from app.llm import provider_label
+
+        lines.append(f"*Generated {generated_at} — {provider_label(self.settings)}, evidence-grounded RAG pipeline.*")
         lines.append("")
 
         # Executive summary — built from a broad retrieval over the topic itself.
@@ -159,9 +160,8 @@ class ReportGenerator:
             f"query rather than the full corpus."
         )
         limitations_prompt = build_report_limitations_prompt(topic=topic, limitations_context=limitations_context)
-        llm = self._get_llm()
         try:
-            limitations_text = _extract_text(llm.invoke(limitations_prompt)).strip()
+            limitations_text = _extract_text(self._get_llm().invoke(limitations_prompt)).strip()
         except Exception as exc:  # noqa: BLE001
             logger.error("Limitations section failed: %s", exc)
             limitations_text = (

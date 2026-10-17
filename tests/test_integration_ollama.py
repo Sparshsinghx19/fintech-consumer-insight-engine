@@ -9,10 +9,15 @@ rest of the test suite (and CI) never depends on it. Run explicitly with:
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from app.config import settings
+from app.config import settings as env_settings
 from app.llm import check_ollama_status, get_chat_model
+
+# Always exercise Ollama here, even if LLM_PROVIDER=gemini is set locally.
+settings = replace(env_settings, llm_provider="ollama")
 
 pytestmark = pytest.mark.integration
 

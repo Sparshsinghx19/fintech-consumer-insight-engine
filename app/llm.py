@@ -1,10 +1,16 @@
 """
-Local LLM access via Ollama.
+LLM access for the RAG workflows.
 
-Uses the current (non-deprecated) `langchain_ollama` package. The
-application never sends documents, questions, or generated content to a
-cloud LLM API - all generation happens through the locally running
-Ollama server.
+Two providers, selected with LLM_PROVIDER:
+
+  - "ollama" (default): local inference through a running Ollama server
+    via the current (non-deprecated) `langchain_ollama` package. Nothing
+    is sent to a cloud LLM API.
+  - "gemini": hosted inference through the Google Gemini API (see
+    app/gemini.py). Questions and retrieved passages are sent to Google.
+
+Every workflow obtains its model from `get_chat_model`, so the selected
+provider is used consistently for Q&A, insights, and reports.
 """
 from __future__ import annotations
 
@@ -17,9 +23,18 @@ import requests
 from langchain_ollama import ChatOllama
 
 from app.config import Settings, settings as default_settings
+from app.gemini import (
+    LLMConfigurationError,
+    build_gemini_chat_model,
+    create_gemini_client,
+    describe_gemini_error,
+    validate_gemini_settings,
+)
 from app.utils import get_logger
 
 logger = get_logger(__name__)
+
+SUPPORTED_PROVIDERS = ("ollama", "gemini")
 
 
 @dataclass
@@ -28,6 +43,64 @@ class OllamaStatus:
     model_available: bool
     available_models: list[str]
     error: Optional[str] = None
+    provider: str = "ollama"
+
+
+# Provider-neutral name for the status object.
+LLMStatus = OllamaStatus
+
+
+def active_model_name(settings: Optional[Settings] = None) -> str:
+    s = settings or default_settings
+    return s.gemini_model if s.llm_provider == "gemini" else s.ollama_model
+
+
+def provider_label(settings: Optional[Settings] = None) -> str:
+    """Human-readable description of where generation happens."""
+    s = settings or default_settings
+    if s.llm_provider == "gemini":
+        return f"Gemini model '{s.gemini_model}' via the hosted Google Gemini API"
+    return f"local model '{s.ollama_model}' via Ollama"
+
+
+def check_llm_status(settings: Optional[Settings] = None, timeout: float = 3.0) -> LLMStatus:
+    """Health check for the selected provider. Never raises."""
+    s = settings or default_settings
+    if s.llm_provider == "ollama":
+        return check_ollama_status(s, timeout=timeout)
+    if s.llm_provider == "gemini":
+        return check_gemini_status(s)
+    return LLMStatus(
+        reachable=False,
+        model_available=False,
+        available_models=[],
+        error=_unsupported_provider_message(s.llm_provider),
+        provider=s.llm_provider,
+    )
+
+
+def check_gemini_status(settings: Optional[Settings] = None, client=None) -> LLMStatus:
+    """Verify the Gemini key and model with a metadata lookup (no
+    generation, no document content sent). Never raises."""
+    s = settings or default_settings
+    try:
+        validate_gemini_settings(s)
+        client = client or create_gemini_client(s)
+        client.models.get(model=s.gemini_model)
+    except Exception as exc:  # noqa: BLE001
+        reachable = not isinstance(exc, (LLMConfigurationError, httpx.TransportError))
+        return LLMStatus(
+            reachable=reachable,
+            model_available=False,
+            available_models=[],
+            error=describe_llm_error(exc, s),
+            provider="gemini",
+        )
+    return LLMStatus(reachable=True, model_available=True, available_models=[s.gemini_model], provider="gemini")
+
+
+def _unsupported_provider_message(provider: str) -> str:
+    return f"Unsupported LLM_PROVIDER '{provider}'. Set it to one of: {', '.join(SUPPORTED_PROVIDERS)}."
 
 
 def model_is_installed(configured: str, installed: list[str]) -> bool:
@@ -83,9 +156,14 @@ def check_ollama_status(settings: Optional[Settings] = None, timeout: float = 3.
     return OllamaStatus(reachable=True, model_available=model_available, available_models=model_names, error=error)
 
 
-def get_chat_model(settings: Optional[Settings] = None) -> ChatOllama:
-    """Build a ChatOllama instance pointed at the configured local model."""
+def get_chat_model(settings: Optional[Settings] = None):
+    """Build the chat model for the configured provider. Raises
+    LLMConfigurationError for an unknown provider or missing Gemini key."""
     s = settings or default_settings
+    if s.llm_provider == "gemini":
+        return build_gemini_chat_model(s)
+    if s.llm_provider != "ollama":
+        raise LLMConfigurationError(_unsupported_provider_message(s.llm_provider))
     return ChatOllama(
         model=s.ollama_model,
         base_url=s.ollama_base_url,
@@ -98,9 +176,24 @@ def get_chat_model(settings: Optional[Settings] = None) -> ChatOllama:
 
 def describe_llm_error(exc: Exception, settings: Optional[Settings] = None) -> str:
     """Turn an exception from an LLM call into an actionable, user-facing
-    message, distinguishing a missing model and a timeout from Ollama
-    being unreachable."""
+    message for the configured provider, distinguishing misconfiguration,
+    a missing model, and a timeout from the provider being unreachable."""
     s = settings or default_settings
+    if isinstance(exc, LLMConfigurationError):
+        return str(exc)
+    if s.llm_provider == "gemini":
+        gemini_message = describe_gemini_error(exc, s)
+        if gemini_message:
+            return gemini_message
+        if isinstance(exc, httpx.TimeoutException):
+            return (
+                f"Gemini did not respond within {s.gemini_request_timeout} seconds. "
+                "Try again, retrieve fewer passages, or increase GEMINI_REQUEST_TIMEOUT."
+            )
+        return (
+            "The Gemini API could not be reached. Check the server's internet connection and that "
+            "GEMINI_API_KEY is set, then try again."
+        )
     if isinstance(exc, ollama.ResponseError) and exc.status_code == 404:
         return (
             f"The model '{s.ollama_model}' is not installed in Ollama. Run 'ollama list' to see installed "
