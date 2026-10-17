@@ -151,11 +151,13 @@ class InsightEngine:
         try:
             raw_response = llm.invoke(prompt)
         except Exception as exc:  # noqa: BLE001
+            from app.llm import describe_llm_error
+
             logger.error("Insight generation failed for topic '%s': %s", topic, exc)
             return ConsumerInsight(
                 title=f"Could not generate insight on {topic}",
                 consumer_problem="",
-                evidence="The local Mistral model could not be reached via Ollama.",
+                evidence=describe_llm_error(exc, self.settings),
                 interpretation="",
                 topic=topic,
             )

@@ -12,6 +12,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import List, Optional
 
+from chromadb.config import Settings as ChromaSettings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
 
@@ -20,6 +21,14 @@ from app.embeddings import get_embedding_function
 from app.utils import get_logger
 
 logger = get_logger(__name__)
+
+
+def _chroma_client_settings() -> ChromaSettings:
+    """Chroma client settings with anonymized telemetry disabled, so the
+    vector store makes no outbound network calls. `is_persistent` must be
+    set explicitly: when client settings are supplied, langchain_chroma
+    does not enable on-disk persistence by itself."""
+    return ChromaSettings(anonymized_telemetry=False, is_persistent=True)
 
 
 class VectorStoreManager:
@@ -39,6 +48,7 @@ class VectorStoreManager:
                 collection_name=self.settings.collection_name,
                 embedding_function=self._embeddings,
                 persist_directory=str(self.settings.vectorstore_dir),
+                client_settings=_chroma_client_settings(),
             )
         return self._store
 

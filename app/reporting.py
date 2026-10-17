@@ -77,11 +77,10 @@ class ReportGenerator:
             response = llm.invoke(prompt)
             text = _extract_text(response).strip()
         except Exception as exc:  # noqa: BLE001
+            from app.llm import describe_llm_error
+
             logger.error("Report section '%s' failed to generate: %s", section_title, exc)
-            text = (
-                "_This section could not be generated because the local Mistral model via "
-                "Ollama was unreachable._"
-            )
+            text = f"_This section could not be generated. {describe_llm_error(exc, self.settings)}_"
         return text, passages
 
     def generate_report(self, topic: str, k: Optional[int] = None) -> ReportResult:

@@ -84,13 +84,12 @@ class RAGChain:
         try:
             raw_response = llm.invoke(prompt)
         except Exception as exc:  # noqa: BLE001
+            from app.llm import describe_llm_error
+
             logger.error("LLM generation failed: %s", exc)
             return RAGResult(
                 question=question,
-                answer=(
-                    "The local Mistral model could not be reached. Please confirm Ollama is running "
-                    "('ollama list' to check installed models, 'ollama run mistral' to test) and try again."
-                ),
+                answer=describe_llm_error(exc, self.settings),
                 sources=passages,
                 context_used=context,
             )

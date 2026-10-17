@@ -32,6 +32,19 @@ def test_vector_store_manager_creates_persist_directory(settings: Settings, fake
     assert settings.vectorstore_dir.exists()
 
 
+def test_store_persists_to_disk_with_telemetry_disabled(settings: Settings, fake_embeddings):
+    with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
+        vsm = VectorStoreManager(settings)
+        vsm.add_documents(
+            [Document(page_content="persisted chunk", metadata={"chunk_hash": "p1", "source": "a.pdf", "page": 1})]
+        )
+        client_settings = vsm.get_store()._client_settings
+        assert client_settings.anonymized_telemetry is False
+        assert client_settings.is_persistent is True
+
+    assert (settings.vectorstore_dir / "chroma.sqlite3").exists()
+
+
 def test_add_documents_skips_existing_chunk_hashes(settings: Settings, fake_embeddings):
     with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
         vsm = VectorStoreManager(settings)

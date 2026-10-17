@@ -123,8 +123,17 @@ architecture means:
 
 ### 6.1 Create and activate a virtual environment
 
+**Python 3.11 is required** (pinned in `.python-version`). The pinned
+dependency set does not install on Python 3.13+ (no `numpy==1.26.4` wheels).
+
 ```bash
-python -m venv .venv
+python3.11 -m venv .venv
+```
+
+Or with [uv](https://docs.astral.sh/uv/), which reads `.python-version`:
+
+```bash
+uv venv
 ```
 
 **Windows:**
@@ -204,7 +213,7 @@ cp .env.example .env
 | `OLLAMA_BASE_URL`        | `http://localhost:11434`                            | Ollama server URL |
 | `OLLAMA_MODEL`           | `mistral`                                            | Model tag to use for generation |
 | `OLLAMA_TEMPERATURE`     | `0.1`                                                | Generation temperature |
-| `OLLAMA_REQUEST_TIMEOUT` | `120`                                                | Request timeout (seconds) |
+| `OLLAMA_REQUEST_TIMEOUT` | `120`                                                | Seconds to wait for Ollama to connect or produce its next output before giving up (covers a hung server or a slow model load; it does not cap total generation time, since output is streamed) |
 | `EMBEDDING_MODEL`        | `sentence-transformers/all-MiniLM-L6-v2`             | Local embedding model |
 | `EMBEDDING_DEVICE`       | `cpu`                                                | `cpu` or `cuda` |
 | `EMBEDDING_BATCH_SIZE`   | `32`                                                  | Batch size for embedding generation |

@@ -23,6 +23,24 @@ pypdf==5.1.0
 ### HTTP (Ollama health check)
 requests==2.32.3
 
+### Pinned transitive dependencies
+# These are pulled in by the packages above but left unpinned they drift
+# between installs (torch/transformers in particular). Versions below are
+# the set the test suite was verified against on Python 3.11.
+# Requires Python 3.11 (see .python-version); numpy 1.26 has no wheels
+# for Python 3.13+, so installs on newer interpreters fail.
+numpy==1.26.4
+torch==2.14.1
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface-hub==0.36.2
+ollama==0.6.3
+httpx==0.28.1
+# chromadb 0.5.x calls posthog.capture() with the pre-6.0 signature;
+# newer posthog raises on every Chroma call (telemetry is disabled in
+# app/vector_store.py either way - this just keeps the logs clean).
+posthog==3.7.0
+
 ### Testing
 pytest==8.3.3
 pytest-mock==3.14.0
