@@ -11,8 +11,10 @@ extracting text + metadata per page, and gracefully handling:
 """
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable, List, Optional
 
 from pypdf import PdfReader
@@ -44,6 +46,9 @@ class IngestionReport:
     skipped_duplicates: List[str] = field(default_factory=list)
     failed_files: List[str] = field(default_factory=list)
     empty_or_scanned_files: List[str] = field(default_factory=list)
+    # file name -> content hash for every successfully processed file. This
+    # is the "current state" the vector store is synced against.
+    file_hashes: dict[str, str] = field(default_factory=dict)
     total_pages: int = 0
     total_pages_with_text: int = 0
 
@@ -151,6 +156,7 @@ class PDFIngestor:
 
             seen_hashes[file_hash] = pdf_path.name
             report.processed_files.append(pdf_path.name)
+            report.file_hashes[pdf_path.name] = file_hash
             report.total_pages += len(pages)
 
             pages_with_text = [p for p in pages if p.text.strip()]
@@ -159,7 +165,7 @@ class PDFIngestor:
             if not pages_with_text:
                 logger.warning(
                     "%s produced no extractable text on any page (likely a scanned "
-                    "document without OCR). It will be indexed with empty content.",
+                    "document without OCR). It will not be searchable.",
                     pdf_path.name,
                 )
                 report.empty_or_scanned_files.append(pdf_path.name)
@@ -167,6 +173,51 @@ class PDFIngestor:
             all_pages.extend(pages)
 
         return all_pages, report
+
+
+_UNSAFE_FILENAME_CHARS_RE = re.compile(r"[^A-Za-z0-9._()\- ]+")
+_MAX_FILENAME_LENGTH = 150
+
+
+def sanitize_upload_filename(name: str) -> Optional[str]:
+    """Reduce a client-supplied upload name to a safe, flat ``*.pdf`` file
+    name, or return None if nothing usable remains.
+
+    Strips any directory components (both ``/`` and ``\\``, so a name like
+    ``..\\..\\evil.pdf`` cannot escape the data directory), replaces
+    characters outside a conservative allow-list, and requires a ``.pdf``
+    extension.
+    """
+    if not name:
+        return None
+    base = PureWindowsPath(name.replace("/", "\\")).name
+    stem, dot, ext = base.rpartition(".")
+    if not dot or ext.lower() != "pdf":
+        return None
+    stem = _UNSAFE_FILENAME_CHARS_RE.sub("_", stem).strip(" .")
+    if not stem.strip("_"):
+        return None
+    return f"{stem[: _MAX_FILENAME_LENGTH - 4]}.pdf"
+
+
+def save_uploaded_pdf(data_dir: Path, name: str, data: bytes) -> Path:
+    """Write an uploaded PDF into `data_dir` under a sanitized name and
+    return its path. Raises ValueError for unusable names.
+
+    The file is written to a temporary name first and then moved into
+    place, so a half-written upload never appears as a PDF on disk.
+    """
+    safe_name = sanitize_upload_filename(name)
+    if safe_name is None:
+        raise ValueError(f"'{name}' is not a valid PDF file name.")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    dest = (data_dir / safe_name).resolve()
+    if dest.parent != data_dir.resolve():
+        raise ValueError(f"'{name}' resolves outside the data directory.")
+    tmp = dest.with_name(f".{dest.name}.uploading")
+    tmp.write_bytes(data)
+    os.replace(tmp, dest)
+    return dest
 
 
 def filter_pages_with_content(pages: Iterable[PageRecord]) -> List[PageRecord]:

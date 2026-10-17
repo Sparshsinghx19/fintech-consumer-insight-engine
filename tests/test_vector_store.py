@@ -10,7 +10,7 @@ import pytest
 from langchain_core.documents import Document
 
 from app.config import Settings
-from app.vector_store import VectorStoreManager
+from app.vector_store import IndexingError, VectorStoreManager
 
 
 @pytest.fixture
@@ -101,15 +101,14 @@ def test_delete_by_source_with_no_matches_is_noop(settings: Settings, fake_embed
         mock_store.delete.assert_not_called()
 
 
-def test_rebuild_resets_then_adds_without_dedup_check(settings: Settings, fake_embeddings):
+def test_rebuild_with_no_documents_refuses_and_touches_nothing(settings: Settings, fake_embeddings):
     with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
         vsm = VectorStoreManager(settings)
         vsm.reset = MagicMock()
         vsm.get_store = MagicMock()
-        vsm.existing_chunk_hashes = MagicMock(return_value=set())
 
-        docs = [Document(page_content="x", metadata={"chunk_hash": "h1"})]
-        vsm.rebuild(docs)
+        with pytest.raises(IndexingError, match="left unchanged"):
+            vsm.rebuild([])
 
-        vsm.reset.assert_called_once()
-        vsm.get_store.return_value.add_documents.assert_called_once()
+        vsm.reset.assert_not_called()
+        vsm.get_store.assert_not_called()

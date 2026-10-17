@@ -7,20 +7,17 @@ sent to a cloud LLM API.
 """
 from __future__ import annotations
 
-import shutil
-from pathlib import Path
-
 import streamlit as st
 
-from app.chunking import DocumentChunker
 from app.config import settings
-from app.ingestion import PDFIngestor
+from app.indexing import build_index as run_build_index
+from app.ingestion import PDFIngestor, save_uploaded_pdf
 from app.insights import DEFAULT_INSIGHT_TOPICS, InsightEngine
 from app.llm import check_ollama_status
 from app.rag_chain import RAGChain
 from app.reporting import ReportGenerator
 from app.retriever import SemanticRetriever
-from app.vector_store import VectorStoreManager
+from app.vector_store import IndexingError, VectorStoreManager
 
 st.set_page_config(page_title="FinTech Consumer Insight Engine", layout="wide")
 settings.ensure_directories()
@@ -37,27 +34,40 @@ def get_retriever() -> SemanticRetriever:
 
 def build_index(rebuild: bool = False) -> dict:
     """Run ingestion + chunking + indexing and return a stats dict."""
-    ingestor = PDFIngestor(settings)
-    pages, report = ingestor.ingest_directory()
+    return run_build_index(get_vector_store_manager(), settings, rebuild=rebuild)
 
-    chunker = DocumentChunker(settings)
-    documents = chunker.chunk_pages(pages)
 
-    vsm = get_vector_store_manager()
-    if rebuild:
-        added = vsm.rebuild(documents)
-    else:
-        added = vsm.add_documents(documents, skip_duplicates=True)
+def run_indexing_action(rebuild: bool, spinner_text: str, success_text: str) -> None:
+    with st.spinner(spinner_text):
+        try:
+            stats = build_index(rebuild=rebuild)
+        except IndexingError as exc:
+            st.error(str(exc))
+            return
+    st.success(success_text)
+    st.json(stats)
 
-    return {
-        "processed_files": report.processed_files,
-        "skipped_duplicates": report.skipped_duplicates,
-        "failed_files": report.failed_files,
-        "empty_or_scanned_files": report.empty_or_scanned_files,
-        "total_pages": report.total_pages,
-        "total_chunks_this_run": len(documents),
-        "chunks_added": added,
-    }
+
+def save_new_uploads(uploaded_files) -> None:
+    """Save each uploaded file once. The uploader keeps returning the same
+    files on every rerun, so already-saved uploads (tracked by file_id) are
+    skipped - which also stops a deleted document from being written back."""
+    saved_ids = st.session_state.setdefault("saved_upload_ids", set())
+    saved, rejected = [], []
+    for uf in uploaded_files:
+        if uf.file_id in saved_ids:
+            continue
+        saved_ids.add(uf.file_id)
+        try:
+            dest = save_uploaded_pdf(settings.data_dir, uf.name, uf.getvalue())
+        except (ValueError, OSError) as exc:
+            rejected.append(f"{uf.name}: {exc}")
+        else:
+            saved.append(dest.name)
+    if saved:
+        st.success(f"Saved {len(saved)} file(s) to {settings.data_dir}: {', '.join(saved)}")
+    for message in rejected:
+        st.error(f"Upload rejected - {message}")
 
 
 st.title("💳 FinTech Consumer Insight Engine")
@@ -109,12 +119,7 @@ with tabs[1]:
 
     uploaded_files = st.file_uploader("Upload PDF(s)", type=["pdf"], accept_multiple_files=True)
     if uploaded_files:
-        settings.data_dir.mkdir(parents=True, exist_ok=True)
-        for uf in uploaded_files:
-            dest = settings.data_dir / uf.name
-            with open(dest, "wb") as f:
-                shutil.copyfileobj(uf, f)
-        st.success(f"Saved {len(uploaded_files)} file(s) to {settings.data_dir}")
+        save_new_uploads(uploaded_files)
 
     existing_pdfs = PDFIngestor(settings).discover_pdfs()
     st.write(f"**{len(existing_pdfs)} PDF file(s)** currently in `{settings.data_dir}`:")
@@ -145,16 +150,18 @@ with tabs[1]:
     col_a, col_b = st.columns(2)
     with col_a:
         if st.button("Build / update index (incremental)", type="primary"):
-            with st.spinner("Ingesting, chunking, and embedding new documents locally..."):
-                stats = build_index(rebuild=False)
-            st.success("Index updated.")
-            st.json(stats)
+            run_indexing_action(
+                rebuild=False,
+                spinner_text="Ingesting, chunking, and embedding new documents locally...",
+                success_text="Index updated.",
+            )
     with col_b:
         if st.button("Rebuild index from scratch"):
-            with st.spinner("Rebuilding the entire vector store locally..."):
-                stats = build_index(rebuild=True)
-            st.success("Index rebuilt.")
-            st.json(stats)
+            run_indexing_action(
+                rebuild=True,
+                spinner_text="Rebuilding the entire vector store locally...",
+                success_text="Index rebuilt.",
+            )
 
 # ----------------------------------------------------------------------
 # Semantic Search
