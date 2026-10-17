@@ -30,6 +30,15 @@ class RAGResult:
     answer: str
     sources: List[RetrievedPassage]
     context_used: str
+    # Set (to the same user-facing message as `answer`) when generation failed.
+    error: Optional[str] = None
+
+
+def passages_in_context(result: RAGResult) -> List[bool]:
+    """For each retrieved passage, whether it was actually sent to the
+    model. `format_context` truncates to MAX_CONTEXT_CHARS, so with many or
+    long passages the last ones can be cut off entirely."""
+    return [f"[Passage {i}] " in result.context_used for i in range(1, len(result.sources) + 1)]
 
 
 def format_context(passages: List[RetrievedPassage], max_chars: int) -> str:
@@ -86,11 +95,13 @@ class RAGChain:
             from app.llm import describe_llm_error
 
             logger.error("LLM generation failed: %s", exc)
+            message = describe_llm_error(exc, self.settings)
             return RAGResult(
                 question=question,
-                answer=describe_llm_error(exc, self.settings),
+                answer=message,
                 sources=passages,
                 context_used=context,
+                error=message,
             )
 
         answer_text = _extract_text(raw_response)

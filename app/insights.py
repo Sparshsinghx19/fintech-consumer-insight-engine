@@ -39,6 +39,12 @@ class ConsumerInsight(BaseModel):
     recommended_action: str = Field(default="", description="A recommendation - never presented as a finding")
     potential_opportunity: str = Field(default="")
     topic: str = Field(default="", description="The research topic/question this insight was generated for")
+    error: str = Field(default="", description="Set when generation failed; the other fields are then placeholders")
+
+
+# consumer_problem value used when the model ignored the structured format
+# and the raw response was stored as evidence.
+UNSTRUCTURED_PLACEHOLDER = "Not explicitly structured by the model."
 
 
 _FIELD_PATTERNS = {
@@ -96,7 +102,7 @@ def parse_insight_response(raw_text: str, topic: str) -> ConsumerInsight:
         logger.warning("Model response did not follow the expected insight format; storing raw text as evidence.")
         return ConsumerInsight(
             title=f"Insight on {topic}",
-            consumer_problem="Not explicitly structured by the model.",
+            consumer_problem=UNSTRUCTURED_PLACEHOLDER,
             evidence=raw_text.strip(),
             interpretation="",
             topic=topic,
@@ -153,12 +159,14 @@ class InsightEngine:
             from app.llm import describe_llm_error
 
             logger.error("Insight generation failed for topic '%s': %s", topic, exc)
+            message = describe_llm_error(exc, self.settings)
             return ConsumerInsight(
                 title=f"Could not generate insight on {topic}",
                 consumer_problem="",
-                evidence=describe_llm_error(exc, self.settings),
+                evidence=message,
                 interpretation="",
                 topic=topic,
+                error=message,
             )
 
         return parse_insight_response(_extract_text(raw_response), topic=topic)

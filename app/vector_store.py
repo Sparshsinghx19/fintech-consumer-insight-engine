@@ -38,6 +38,13 @@ class IndexingError(RuntimeError):
 
 
 @dataclass
+class SourceStats:
+    chunks: int
+    pages: int
+    file_hash: str
+
+
+@dataclass
 class SyncResult:
     added: int
     removed: int
@@ -313,6 +320,31 @@ class VectorStoreManager:
 
         logger.info("Deleted %d chunks for source '%s' from the vector store.", len(ids), source)
         return len(ids)
+
+    def source_stats(self) -> dict[str, SourceStats]:
+        """Per-document index statistics from a single metadata scan:
+        chunk count, number of distinct pages, and the file hash the
+        chunks were built from. Empty dict if the index can't be read."""
+        store = self.get_store()
+        try:
+            result = store.get(include=["metadatas"])
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Could not read index statistics: %s", exc)
+            return {}
+        chunks: dict[str, int] = {}
+        pages: dict[str, set] = {}
+        hashes: dict[str, str] = {}
+        for meta in result.get("metadatas", []) or []:
+            source = (meta or {}).get("source")
+            if not source:
+                continue
+            chunks[source] = chunks.get(source, 0) + 1
+            pages.setdefault(source, set()).add(meta.get("page"))
+            hashes.setdefault(source, meta.get("file_hash", ""))
+        return {
+            source: SourceStats(chunks=chunks[source], pages=len(pages[source]), file_hash=hashes[source])
+            for source in chunks
+        }
 
     def indexed_sources(self) -> set[str]:
         store = self.get_store()

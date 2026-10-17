@@ -428,6 +428,8 @@ fintech-consumer-insight-engine/
 │   ├── insights.py          # structured Consumer Insight Engine
 │   ├── reporting.py         # section-by-section Markdown report generation
 │   ├── prompts.py           # evidence-grounding prompt templates
+│   ├── ui.py                # Streamlit rendering helpers + scoped CSS
+│   ├── research_session.py  # session-scoped research history + saved queries
 │   └── utils.py             # logging, hashing, text cleaning
 │
 ├── data/
@@ -449,6 +451,7 @@ fintech-consumer-insight-engine/
 │   ├── test_providers.py
 │   └── test_integration_ollama.py   # optional, requires live Ollama
 │
+├── .streamlit/config.toml           # theme; Streamlit usage stats disabled
 ├── .streamlit/secrets.toml.example
 ├── .env.example
 ├── .gitignore

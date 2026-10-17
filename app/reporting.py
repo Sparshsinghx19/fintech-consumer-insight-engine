@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import List, Optional, Protocol
+from typing import Callable, List, Optional, Protocol
 
 from app.config import Settings, settings as default_settings
 from app.prompts import build_report_limitations_prompt, build_report_section_prompt
@@ -40,6 +40,16 @@ class ReportResult:
     generated_at: str
     markdown: str
     sources: List[str] = field(default_factory=list)
+    # One user-facing message per section that could not be generated.
+    errors: List[str] = field(default_factory=list)
+
+
+# Called as progress_callback(completed_steps, total_steps, label) before
+# each LLM call during report generation.
+ProgressCallback = Callable[[int, int, str], None]
+
+# Executive summary + topic sections + opportunities + recommendations + limitations.
+REPORT_LLM_STEPS = 1 + len(REPORT_SECTIONS) + 2 + 1
 
 
 def _extract_text(response) -> str:
@@ -60,6 +70,9 @@ class ReportGenerator:
         self.settings = settings or default_settings
         self.retriever = retriever or SemanticRetriever(settings=self.settings)
         self._llm = llm
+        self._progress: Optional[ProgressCallback] = None
+        self._steps_done = 0
+        self._errors: List[str] = []
 
     def _get_llm(self) -> SupportsInvoke:
         if self._llm is None:
@@ -68,7 +81,13 @@ class ReportGenerator:
             self._llm = get_chat_model(self.settings)
         return self._llm
 
+    def _report_progress(self, label: str) -> None:
+        if self._progress is not None:
+            self._progress(self._steps_done, REPORT_LLM_STEPS, label)
+        self._steps_done += 1
+
     def _generate_section(self, section_title: str, query: str, topic: str, k: Optional[int]) -> tuple[str, list]:
+        self._report_progress(section_title)
         passages = self.retriever.search(query, k=k)
         context = format_context(passages, self.settings.max_context_chars)
         prompt = build_report_section_prompt(section_title=section_title, topic=topic, context=context)
@@ -79,10 +98,17 @@ class ReportGenerator:
             from app.llm import describe_llm_error
 
             logger.error("Report section '%s' failed to generate: %s", section_title, exc)
-            text = f"_This section could not be generated. {describe_llm_error(exc, self.settings)}_"
+            message = describe_llm_error(exc, self.settings)
+            self._errors.append(f"{section_title}: {message}")
+            text = f"_This section could not be generated. {message}_"
         return text, passages
 
-    def generate_report(self, topic: str, k: Optional[int] = None) -> ReportResult:
+    def generate_report(
+        self, topic: str, k: Optional[int] = None, progress_callback: Optional[ProgressCallback] = None
+    ) -> ReportResult:
+        self._progress = progress_callback
+        self._steps_done = 0
+        self._errors = []
         generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         all_sources: dict[str, set[int]] = {}
 
@@ -160,10 +186,14 @@ class ReportGenerator:
             f"query rather than the full corpus."
         )
         limitations_prompt = build_report_limitations_prompt(topic=topic, limitations_context=limitations_context)
+        self._report_progress("Research Limitations")
         try:
             limitations_text = _extract_text(self._get_llm().invoke(limitations_prompt)).strip()
         except Exception as exc:  # noqa: BLE001
+            from app.llm import describe_llm_error
+
             logger.error("Limitations section failed: %s", exc)
+            self._errors.append(f"Research Limitations: {describe_llm_error(exc, self.settings)}")
             limitations_text = (
                 "This report is based only on the documents currently indexed in the vector store "
                 "and only the top-k retrieved chunks per section, not the entire corpus."
@@ -180,5 +210,13 @@ class ReportGenerator:
             lines.append("- No sources were retrieved for this topic.")
         lines.append("")
 
+        if self._progress is not None:
+            self._progress(REPORT_LLM_STEPS, REPORT_LLM_STEPS, "Done")
         markdown = "\n".join(lines)
-        return ReportResult(topic=topic, generated_at=generated_at, markdown=markdown, sources=sorted(all_sources.keys()))
+        return ReportResult(
+            topic=topic,
+            generated_at=generated_at,
+            markdown=markdown,
+            sources=sorted(all_sources.keys()),
+            errors=list(self._errors),
+        )
