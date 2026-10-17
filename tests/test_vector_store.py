@@ -61,6 +61,33 @@ def test_add_documents_with_empty_list_is_noop(settings: Settings, fake_embeddin
         vsm.get_store.return_value.add_documents.assert_not_called()
 
 
+def test_delete_by_source_removes_matching_chunks(settings: Settings, fake_embeddings):
+    with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
+        vsm = VectorStoreManager(settings)
+        mock_store = MagicMock()
+        mock_store.get.return_value = {"ids": ["h1", "h2"], "metadatas": [{"source": "a.pdf"}, {"source": "a.pdf"}]}
+        vsm.get_store = MagicMock(return_value=mock_store)
+
+        removed = vsm.delete_by_source("a.pdf")
+
+        assert removed == 2
+        mock_store.get.assert_called_once_with(where={"source": "a.pdf"}, include=["metadatas"])
+        mock_store.delete.assert_called_once_with(ids=["h1", "h2"])
+
+
+def test_delete_by_source_with_no_matches_is_noop(settings: Settings, fake_embeddings):
+    with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
+        vsm = VectorStoreManager(settings)
+        mock_store = MagicMock()
+        mock_store.get.return_value = {"ids": [], "metadatas": []}
+        vsm.get_store = MagicMock(return_value=mock_store)
+
+        removed = vsm.delete_by_source("missing.pdf")
+
+        assert removed == 0
+        mock_store.delete.assert_not_called()
+
+
 def test_rebuild_resets_then_adds_without_dedup_check(settings: Settings, fake_embeddings):
     with patch("app.vector_store.get_embedding_function", return_value=fake_embeddings):
         vsm = VectorStoreManager(settings)

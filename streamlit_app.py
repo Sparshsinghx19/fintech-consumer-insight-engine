@@ -118,7 +118,29 @@ with tabs[1]:
 
     existing_pdfs = PDFIngestor(settings).discover_pdfs()
     st.write(f"**{len(existing_pdfs)} PDF file(s)** currently in `{settings.data_dir}`:")
-    st.write([p.name for p in existing_pdfs])
+
+    if existing_pdfs:
+        vsm = get_vector_store_manager()
+        indexed = vsm.indexed_sources()
+        for pdf_path in existing_pdfs:
+            row_left, row_mid, row_right = st.columns([5, 2, 2])
+            row_left.write(pdf_path.name)
+            row_mid.write("Indexed" if pdf_path.name in indexed else "Not indexed")
+            if row_right.button("🗑️ Delete", key=f"delete_{pdf_path.name}"):
+                removed_chunks = 0
+                try:
+                    removed_chunks = vsm.delete_by_source(pdf_path.name)
+                except Exception as exc:  # noqa: BLE001
+                    st.error(f"Could not remove indexed chunks for {pdf_path.name}: {exc}")
+                try:
+                    pdf_path.unlink()
+                except OSError as exc:
+                    st.error(f"Could not delete file {pdf_path.name}: {exc}")
+                else:
+                    st.success(f"Deleted {pdf_path.name} and removed {removed_chunks} indexed chunk(s).")
+                    st.rerun()
+    else:
+        st.info("No PDFs uploaded yet.")
 
     col_a, col_b = st.columns(2)
     with col_a:

@@ -107,6 +107,32 @@ class VectorStoreManager:
             logger.warning("Could not read collection count: %s", exc)
             return 0
 
+    def delete_by_source(self, source: str) -> int:
+        """Remove every chunk belonging to a given source document (by
+        file name) from the vector store. Returns the number of chunks
+        removed. Use this when a PDF is deleted from data/raw/ so stale
+        chunks don't linger in the index or get returned by search."""
+        store = self.get_store()
+        try:
+            result = store.get(where={"source": source}, include=["metadatas"])
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Could not look up chunks for source '%s': %s", source, exc)
+            return 0
+
+        ids = result.get("ids", []) or []
+        if not ids:
+            logger.info("No indexed chunks found for source '%s'.", source)
+            return 0
+
+        try:
+            store.delete(ids=ids)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("Failed to delete chunks for source '%s': %s", source, exc)
+            return 0
+
+        logger.info("Deleted %d chunks for source '%s' from the vector store.", len(ids), source)
+        return len(ids)
+
     def indexed_sources(self) -> set[str]:
         store = self.get_store()
         try:

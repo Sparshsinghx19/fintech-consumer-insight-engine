@@ -1,11 +1,7 @@
 """
-Automated research report generation.
+"I didn't want to retrieve a single set of passages and use that same context to generate the entire report, because different sections require different evidence. So I designed the report generator to work section by section. For each section, such as adoption barriers, trust and security, or consumer segments, I run a section-specific retrieval query, pass the most relevant evidence to Mistral, and generate that section.
 
-Builds a full Markdown research report section-by-section, retrieving
-fresh, section-specific context from ChromaDB for each section so the
-model is grounded even though the corpus is far larger than any single
-context window (500+ pages are never sent to the LLM at once - only the
-top-k relevant chunks per section).
+I then combine the sections into a Markdown report. I also include a Key Evidence section containing directly retrieved passages with their source and page numbers, so the underlying evidence remains traceable. Finally, I clearly separate research evidence from strategic recommendations rather than presenting recommendations as research findings."
 """
 from __future__ import annotations
 
