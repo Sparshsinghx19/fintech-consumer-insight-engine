@@ -40,6 +40,9 @@ tokenizers==0.22.2
 huggingface-hub==0.36.2
 ollama==0.6.3
 httpx==0.28.1
+# Required by streamlit; pyarrow 26+ requires NumPy 2, which would leave
+# Streamlit's own dependency unimportable next to numpy==1.26.4.
+pyarrow==25.0.0
 # chromadb 0.5.x calls posthog.capture() with the pre-6.0 signature;
 # newer posthog raises on every Chroma call (telemetry is disabled in
 # app/vector_store.py either way - this just keeps the logs clean).

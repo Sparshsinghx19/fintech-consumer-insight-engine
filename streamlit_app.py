@@ -630,8 +630,7 @@ def render_evidence_explorer(entry: ResearchEntry) -> None:
             for n, (passage, in_context) in enumerate(zip(entry.sources, entry.in_context), start=1):
                 ui.evidence_card(passage, n, in_context=in_context, key_prefix=f"res{entry.id}")
         with documents_tab:
-            # A Markdown table rather than st.dataframe: st.dataframe needs
-            # pyarrow, which isn't pinned to a NumPy-1-compatible version.
+            # A plain Markdown table: a handful of rows needs no interactive grid.
             st.markdown(ui.evidence_table_markdown(ui.evidence_by_document(entry.sources, entry.in_context)))
             st.caption(ui.SIMILARITY_HELP)
 
