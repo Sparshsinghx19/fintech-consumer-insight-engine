@@ -34,7 +34,7 @@ from app.ingestion import PDFIngestor, save_uploaded_pdf
 from app.insights import DEFAULT_INSIGHT_TOPICS, InsightEngine
 from app.llm import LLMStatus, active_model_name, check_llm_status
 from app.rag_chain import RAGChain
-from app.reporting import REPORT_LLM_STEPS, ReportGenerator
+from app.reporting import REPORT_COMPACT_STEPS, REPORT_LLM_STEPS, ReportGenerator
 from app.research_session import (
     ResearchEntry,
     ResearchHistory,
@@ -838,18 +838,51 @@ def page_insights() -> None:
 # ----------------------------------------------------------------------
 # Report Builder
 # ----------------------------------------------------------------------
+def with_report_progress(run):
+    """Run a report generation function with a progress bar; `run` receives
+    the progress callback."""
+    progress = st.progress(0.0, text="Starting…")
+
+    def on_progress(done: int, total: int, label: str) -> None:
+        text = "Assembling report…" if done >= total else f"Writing “{label}” ({done + 1} of {total})"
+        progress.progress(min(done / total, 1.0) if total else 1.0, text=text)
+
+    try:
+        return run(on_progress)
+    finally:
+        progress.empty()
+
+
 def page_reports() -> None:
     ui.page_header(
         "Report Builder",
         "Generate a full Markdown research report, written section by section from freshly retrieved evidence.",
     )
+    modes = {
+        "Fast": f"Fast — {REPORT_COMPACT_STEPS} grouped model calls",
+        "Detailed": f"Detailed — {REPORT_LLM_STEPS} model calls, one per section",
+    }
     with st.container(border=True):
         ui.card_marker()
         topic = st.text_input("Report topic", placeholder="e.g. Digital wallet adoption among younger consumers")
         k = st.slider("Passages retrieved per section", 1, 20, settings.retrieval_k, key="report_k")
+        mode = st.radio(
+            "Report mode",
+            list(modes),
+            format_func=modes.get,
+            index=0 if USING_GEMINI else 1,
+            horizontal=True,
+            help="Both modes write the same sections from section-specific evidence. Fast mode groups related "
+            "sections into fewer, larger model calls.",
+        )
+        calls = REPORT_COMPACT_STEPS if mode == "Fast" else REPORT_LLM_STEPS
         st.caption(
-            f"Runs {REPORT_LLM_STEPS} sequential model calls"
-            + (" — with a local model this can take several minutes." if not USING_GEMINI else "; each sends the topic and retrieved passages to Google's Gemini API.")
+            f"Runs {calls} sequential model calls"
+            + (
+                "; each sends the topic and retrieved passages to Google's Gemini API."
+                if USING_GEMINI
+                else " — with a local model this can take several minutes."
+            )
         )
         generate = st.button("Generate report", type="primary", disabled=not topic.strip())
         demo_quota_caption()
@@ -857,18 +890,10 @@ def page_reports() -> None:
     if generate:
         if index_is_empty():
             st.warning("The index is empty; the report would have no evidence. Add documents in the Knowledge Base first.")
-        elif consume_generation_quota(REPORT_LLM_STEPS):
-            progress = st.progress(0.0, text="Starting…")
-
-            def on_progress(done: int, total: int, label: str) -> None:
-                text = "Assembling report…" if done >= total else f"Writing “{label}” ({done + 1} of {total})"
-                progress.progress(min(done / total, 1.0), text=text)
-
-            result = ReportGenerator(retriever=get_retriever(), settings=settings).generate_report(
-                topic.strip(), k=k, progress_callback=on_progress
-            )
-            progress.empty()
-            st.session_state["report"] = result
+        elif consume_generation_quota(calls):
+            generator = ReportGenerator(retriever=get_retriever(), settings=settings)
+            build = generator.generate_compact_report if mode == "Fast" else generator.generate_report
+            st.session_state["report"] = with_report_progress(lambda cb: build(topic.strip(), k=k, progress_callback=cb))
 
     report = st.session_state.get("report")
     if report is None:
@@ -893,7 +918,21 @@ def page_reports() -> None:
             del st.session_state["report"]
             st.rerun()
         if report.errors:
-            st.warning(f"{len(report.errors)} section(s) could not be generated:\n\n" + "\n".join(f"- {e}" for e in report.errors))
+            st.warning(
+                "**Incomplete report.** These parts could not be generated and are marked in the report:\n\n"
+                + "\n".join(f"- {e}" for e in report.errors)
+            )
+            failed = report.failed_groups
+            if failed and st.button(
+                f"Retry failed part{'s' if len(failed) > 1 else ''} ({len(failed)} model call{'s' if len(failed) > 1 else ''})",
+                help="Regenerates only the failed groups; sections that were generated successfully are kept.",
+            ):
+                if consume_generation_quota(len(failed)):
+                    generator = ReportGenerator(retriever=get_retriever(), settings=settings)
+                    st.session_state["report"] = with_report_progress(
+                        lambda cb: generator.retry_failed_groups(report, progress_callback=cb)
+                    )
+                    st.rerun()
         if report.sources:
             ui.badges((source, "neutral") for source in report.sources)
 

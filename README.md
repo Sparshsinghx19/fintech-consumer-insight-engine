@@ -224,7 +224,9 @@ cp .env.example .env
 | `LLM_PROVIDER`           | `ollama`                                             | `ollama` (local) or `gemini` (hosted Google Gemini API) |
 | `GEMINI_API_KEY`         | _(empty)_                                            | Gemini API key; required only when `LLM_PROVIDER=gemini`. Never commit it. |
 | `GEMINI_MODEL`           | `gemini-3.8-flash`                                   | Gemini model ID, e.g. `gemini-3.5-flash-lite` for lower cost |
-| `GEMINI_REQUEST_TIMEOUT` | `120`                                                | Seconds before a Gemini request times out |
+| `GEMINI_REQUEST_TIMEOUT` | `120`                                                | Seconds before a Gemini request attempt times out |
+| `GEMINI_THINKING_LEVEL`  | model default (`low` in public demo mode)            | `minimal`, `low`, `medium`, or `high`; lower is faster. `gemini-3.8-flash` supports `low`/`medium`/`high` |
+| `GEMINI_RETRY_ATTEMPTS`  | `3`                                                  | Total attempts per Gemini request; transient 500/502/503/504 errors, timeouts, and connection errors are retried by the SDK with bounded backoff (about 2s, then 4s) |
 | `PUBLIC_DEMO_MODE`       | `false`                                              | Read-only public demo: disables uploads, deletion, and reindexing; rate-limits model calls |
 | `DEMO_SESSION_REQUEST_LIMIT` | `20`                                             | Demo mode: model calls per browser session per window (a report counts as 10) |
 | `DEMO_GLOBAL_REQUEST_LIMIT`  | `200`                                            | Demo mode: model calls per server process per window, across all visitors |
@@ -408,9 +410,11 @@ pytest tests/test_integration_ollama.py -m integration -v
 - No OCR is performed on scanned PDFs — text must already be extractable.
 - The relevance score shown is a simple normalized-distance approximation for
   display/ranking, not a calibrated probability.
-- Report generation makes multiple sequential LLM calls (one per section), so full
-  reports can take a few minutes depending on your hardware (or, in hosted mode, on
-  Gemini latency and rate limits).
+- Report generation makes sequential LLM calls: 10 in **Detailed** mode (one per
+  section) or 3 in **Fast** mode (related sections grouped, each group with its own
+  section-specific retrieval), so reports can take a while depending on your hardware
+  or Gemini latency. If a Fast-mode group fails, the rest of the report is kept, the
+  failed sections are marked as not generated, and only that group can be retried.
 
 ## 19. Future Improvements
 

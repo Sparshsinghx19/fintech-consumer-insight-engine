@@ -178,7 +178,9 @@ def _api_error(code: int, message: str) -> errors.APIError:
         (403, "Permission denied", "rejected the API key"),
         (404, "models/gemini-x is not found", "GEMINI_MODEL"),
         (429, "Resource has been exhausted", "quota"),
-        (503, "Service unavailable", "Try again shortly"),
+        (500, "Internal error", "Try again shortly"),
+        (503, "Service unavailable", "temporarily unavailable or overloaded (503)"),
+        (504, "Deadline exceeded", "temporarily unavailable or overloaded (504)"),
     ],
 )
 def test_gemini_api_errors_have_actionable_messages(gemini_settings, code, message, expected):

@@ -109,6 +109,31 @@ ingested rather than the entire body of FinTech research literature.
 """
 
 
+REPORT_GROUP_PROMPT = """\
+{grounding_rules}
+
+RETRIEVED CONTEXT for a FinTech consumer research report on "{topic}"
+(passages retrieved for the sections below, duplicates removed):
+{context}
+{extra_context}
+Write the following sections of the report about "{topic}". Base every
+factual claim strictly on the retrieved context and cite document name +
+page number for each claim, e.g. (report.pdf, p. 3). If the retrieved
+context has little or nothing relevant to a section, write 1-2 sentences
+noting the evidence gap instead of inventing content. Use professional
+research-report prose (not a raw list of quotes).
+
+Sections to write, in this order:
+{section_list}
+
+Format: start each section with a line containing exactly
+"{marker} <section title>" using the titles above, followed by the
+section body. Do not add any other headings, preamble, or closing remarks.
+"""
+
+REPORT_SECTION_MARKER = "### SECTION:"
+
+
 def build_rag_prompt(question: str, context: str) -> str:
     return RAG_ANSWER_PROMPT.format(grounding_rules=GROUNDING_RULES, context=context, question=question)
 
@@ -120,6 +145,23 @@ def build_insight_prompt(topic: str, context: str) -> str:
 def build_report_section_prompt(section_title: str, topic: str, context: str) -> str:
     return REPORT_SECTION_PROMPT.format(
         grounding_rules=GROUNDING_RULES, section_title=section_title, topic=topic, context=context
+    )
+
+
+def build_report_group_prompt(
+    topic: str, context: str, sections: list[tuple[str, str]], extra_context: str = ""
+) -> str:
+    """Prompt for several report sections in one call. `sections` is a
+    list of (title, guidance)."""
+    section_list = "\n".join(f"- {title}: {guidance}" for title, guidance in sections)
+    extra = f"\n{extra_context}\n" if extra_context else ""
+    return REPORT_GROUP_PROMPT.format(
+        grounding_rules=GROUNDING_RULES,
+        topic=topic,
+        context=context,
+        extra_context=extra,
+        section_list=section_list,
+        marker=REPORT_SECTION_MARKER,
     )
 
 

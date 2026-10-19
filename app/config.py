@@ -90,6 +90,17 @@ class Settings:
     gemini_api_key: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_API_KEY", ""), repr=False)
     gemini_model: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_MODEL", "gemini-3.8-flash"))
     gemini_request_timeout: int = field(default_factory=lambda: _get_int("GEMINI_REQUEST_TIMEOUT", 120))
+    # Thinking level ("minimal", "low", "medium", "high"; support varies by
+    # model). Empty means the model's default - except in public demo mode,
+    # where "low" is the default to keep hosted responses fast.
+    gemini_thinking_level: str = field(
+        default_factory=lambda: _get_env_or_secret(
+            "GEMINI_THINKING_LEVEL", "low" if _get_bool("PUBLIC_DEMO_MODE", False) else ""
+        ).lower()
+    )
+    # Total attempts per Gemini request (1 = no retries). Retries use the
+    # SDK's bounded exponential backoff and only cover transient errors.
+    gemini_retry_attempts: int = field(default_factory=lambda: _get_int_env_or_secret("GEMINI_RETRY_ATTEMPTS", 3))
 
     # --- Public demo mode (off by default) ---
     # When on, visitors can't upload, delete, or reindex documents, and LLM
