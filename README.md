@@ -8,6 +8,12 @@ produce full Markdown research reports. In the default local mode this happens
 **without sending any document content, question, or generated output to a cloud LLM
 API**.
 
+### [🚀 Live Demo](https://fintech-consumer-insight-engine-eubtukc3z3vrvfxduwepzd.streamlit.app/)
+
+The hosted demo runs on Streamlit Community Cloud using the **Gemini API** for generation,
+in read-only public demo mode over a small set of illustrative demo documents. Local
+development uses **Ollama with Mistral** by default (see [Installation](#6-installation)).
+
 An optional **hosted mode** (`LLM_PROVIDER=gemini`) uses the Google Gemini API for
 generation instead, e.g. for a Streamlit Community Cloud deployment where Ollama is
 not available. Hosted mode is **not fully local**: see
