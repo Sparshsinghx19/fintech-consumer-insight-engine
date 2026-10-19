@@ -240,7 +240,7 @@ cp .env.example .env
 | `CHUNK_OVERLAP`          | `150`                                                | Overlap between chunks |
 | `RETRIEVAL_K`            | `5`                                                   | Default number of chunks retrieved per query |
 | `MAX_CONTEXT_CHARS`      | `12000`                                              | Cap on context length sent to the LLM per call |
-| `DATA_DIR`               | `data/raw`                                           | Where to place source PDFs |
+| `DATA_DIR`               | `data/raw` (`demo_data` in public demo mode)          | Where to place source PDFs |
 | `VECTORSTORE_DIR`        | `vectorstore`                                        | ChromaDB persistence directory |
 | `CHROMA_COLLECTION`      | `fintech_research`                                   | Chroma collection name |
 
@@ -332,11 +332,19 @@ For a public deployment (e.g. Streamlit Community Cloud), set `PUBLIC_DEMO_MODE=
 (in Streamlit secrets or the environment). It is off by default, so local development
 is unaffected. In demo mode:
 
+- **Bundled demo corpus.** Unless `DATA_DIR` is set explicitly, documents are read from
+  `demo_data/`, which contains two short, clearly labelled *illustrative* PDFs
+  (no real survey data). On start-up, if the vector index is empty, the app indexes
+  them automatically with the normal ingestion → chunking → local embedding pipeline
+  (`seed_demo_index`). Seeding runs once per server process, is add-only, and never
+  modifies an index that already has content; it does nothing when demo mode is off.
+  Because Streamlit Community Cloud can reset the filesystem, the committed PDFs are
+  the source of truth and the index is recreated after a reset (the first visitor
+  afterwards waits for indexing, and the embedding model downloads on first use).
+  Regenerate the PDFs with `python scripts/build_demo_corpus.py`.
 - **Read-only documents.** The Knowledge Base shows the indexed collection but hides
   upload, delete, and reindex controls, and the indexing code refuses to run
-  (`build_index` raises `DemoModeRestriction`). Index the demo corpus before deploying
-  — locally with demo mode off — and ship the `data/raw` PDFs and `vectorstore/`
-  directory with the deployment.
+  (`build_index` raises `DemoModeRestriction`).
 - **Research stays available:** Dashboard, Semantic Search, Research Assistant,
   Insights Studio, and Report Builder.
 - **Rate-limited model calls.** Each browser session may make
@@ -466,6 +474,9 @@ fintech-consumer-insight-engine/
 ├── data/
 │   ├── raw/                 # put source PDFs here
 │   └── processed/
+│
+├── demo_data/               # illustrative demo PDFs (public demo mode)
+├── scripts/build_demo_corpus.py  # regenerates demo_data/*.pdf
 │
 ├── vectorstore/             # persisted ChromaDB collection
 │

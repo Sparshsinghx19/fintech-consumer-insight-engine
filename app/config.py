@@ -76,6 +76,9 @@ def _get_int_env_or_secret(name: str, default: int) -> int:
         raise ValueError(f"Setting {name}='{raw}' is not a valid integer.")
 
 
+DEMO_DATA_DIR = "demo_data"
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- LLM provider ---
@@ -116,7 +119,13 @@ class Settings:
     retrieval_k: int = field(default_factory=lambda: _get_int("RETRIEVAL_K", 5))
 
     # --- Storage paths ---
-    data_dir: Path = field(default_factory=lambda: Path(os.getenv("DATA_DIR", "data/raw")))
+    # In public demo mode the bundled, version-controlled demo corpus is the
+    # default source; an explicit DATA_DIR always wins.
+    data_dir: Path = field(
+        default_factory=lambda: Path(
+            os.getenv("DATA_DIR") or (DEMO_DATA_DIR if _get_bool("PUBLIC_DEMO_MODE", False) else "data/raw")
+        )
+    )
     processed_dir: Path = field(default_factory=lambda: Path(os.getenv("PROCESSED_DIR", "data/processed")))
     vectorstore_dir: Path = field(default_factory=lambda: Path(os.getenv("VECTORSTORE_DIR", "vectorstore")))
     collection_name: str = field(default_factory=lambda: os.getenv("CHROMA_COLLECTION", "fintech_research"))

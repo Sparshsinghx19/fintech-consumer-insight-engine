@@ -235,6 +235,12 @@ def privacy_notice(settings: Settings) -> None:
         )
 
 
+DEMO_CORPUS_NOTE = (
+    "The bundled documents are illustrative demo research written for this showcase — "
+    "not actual consumer survey results."
+)
+
+
 def demo_banner(settings: Settings) -> None:
     """Notice shown above every page in public demo mode."""
     text = "**Public demo.** The document collection is read-only and usage is rate-limited."

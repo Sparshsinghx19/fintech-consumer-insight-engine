@@ -6,6 +6,7 @@ against a real (temporary) Chroma collection.
 """
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Optional
@@ -142,3 +143,57 @@ def build_index(
         "chunks_removed": removed,
         "chunks_unchanged": unchanged,
     }
+
+
+# Demo seeding outcomes.
+SEED_DISABLED = "disabled"  # PUBLIC_DEMO_MODE is off; nothing is touched
+SEED_ALREADY_INDEXED = "already_indexed"  # the index has content; nothing is touched
+SEED_SEEDED = "seeded"
+
+# Serializes seeding within a process so concurrent sessions can't index the
+# demo corpus at the same time (chunk IDs are deterministic, so a repeat
+# would be harmless anyway, just wasted work).
+_seed_lock = threading.Lock()
+
+
+@dataclass
+class DemoSeedResult:
+    status: str
+    chunks_added: int = 0
+    documents: tuple[str, ...] = ()
+
+
+def seed_demo_index(vsm: VectorStoreManager, settings: Optional[Settings] = None) -> DemoSeedResult:
+    """In public demo mode, index the bundled demo PDFs if the index is empty.
+
+    Add-only by design: it never deletes, rebuilds, or modifies an index
+    that already has content, and does nothing outside demo mode, so a
+    developer's local corpus is never touched. Safe to call on every app
+    start; Streamlit Community Cloud may reset the runtime, in which case
+    the bundled PDFs are re-indexed from scratch.
+
+    Raises IndexingError with a user-facing message if seeding fails.
+    """
+    s = settings or default_settings
+    if not s.public_demo_mode:
+        return DemoSeedResult(SEED_DISABLED)
+
+    with _seed_lock:
+        if vsm.count() > 0:
+            return DemoSeedResult(SEED_ALREADY_INDEXED)
+        try:
+            pages, report = PDFIngestor(s).ingest_directory()
+            documents = DocumentChunker(s).chunk_pages(pages)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Reading the demo corpus failed.")
+            raise IndexingError(f"Reading the demo documents in {s.data_dir} failed: {exc}") from exc
+        if not documents:
+            raise IndexingError(f"No demo documents with extractable text were found in {s.data_dir}.")
+        try:
+            added = vsm.add_documents(documents, skip_duplicates=True)
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Indexing the demo corpus failed.")
+            raise IndexingError(f"Indexing the demo documents failed: {exc}") from exc
+
+    logger.info("Seeded the demo index with %d chunks from %d documents.", added, len(report.processed_files))
+    return DemoSeedResult(SEED_SEEDED, added, tuple(report.processed_files))

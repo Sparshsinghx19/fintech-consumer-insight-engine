@@ -21,7 +21,14 @@ import streamlit as st
 
 from app import ui
 from app.config import settings
-from app.indexing import DocumentStatus, REMOVED, build_index as run_build_index, document_statuses
+from app.indexing import (
+    REMOVED,
+    SEED_SEEDED,
+    DocumentStatus,
+    build_index as run_build_index,
+    document_statuses,
+    seed_demo_index,
+)
 from app.demo import DemoModeRestriction, SlidingWindowLimiter, format_wait, require_write_access, try_consume
 from app.ingestion import PDFIngestor, save_uploaded_pdf
 from app.insights import DEFAULT_INSIGHT_TOPICS, InsightEngine
@@ -111,6 +118,18 @@ def file_hash(path: Path) -> Optional[str]:
 
 def invalidate_index_views() -> None:
     _cached_source_stats.clear()
+
+
+@st.cache_resource(show_spinner="Preparing the demo research corpus (first start only)…")
+def ensure_demo_index() -> str:
+    """Index the bundled demo PDFs once per server process if the index is
+    empty. st.cache_resource runs this once and makes concurrent sessions
+    wait for it; seed_demo_index itself never touches a non-empty index.
+    Failures aren't cached, so the next rerun retries."""
+    result = seed_demo_index(get_vector_store_manager(), settings)
+    if result.status == SEED_SEEDED:
+        invalidate_index_views()
+    return result.status
 
 
 def current_documents() -> list[DocumentStatus]:
@@ -250,6 +269,8 @@ def page_dashboard() -> None:
 
     if not stats and DEMO_MODE:
         st.info("No documents are indexed in this demo yet, so research features have no evidence to work from.")
+    elif DEMO_MODE and not pending:
+        st.caption(ui.DEMO_CORPUS_NOTE)
     elif pending and DEMO_MODE:
         st.info("Some documents changed since the demo index was built; results reflect the indexed versions.")
     elif not stats:
@@ -329,6 +350,7 @@ def page_knowledge_base() -> None:
             "This public demo's document collection is read-only: uploading, deleting, and reindexing are disabled.",
             icon=":material/lock:",
         )
+        st.caption(ui.DEMO_CORPUS_NOTE)
         render_documents_card(current_documents(), allow_actions=False)
         return
 
@@ -904,5 +926,9 @@ with st.sidebar:
 
 if DEMO_MODE:
     ui.demo_banner(settings)
+    try:
+        ensure_demo_index()
+    except IndexingError as exc:
+        st.error(f"The demo research corpus could not be indexed, so research features have no evidence yet. {exc}")
 
 navigation.run()
