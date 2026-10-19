@@ -225,6 +225,10 @@ cp .env.example .env
 | `GEMINI_API_KEY`         | _(empty)_                                            | Gemini API key; required only when `LLM_PROVIDER=gemini`. Never commit it. |
 | `GEMINI_MODEL`           | `gemini-3.8-flash`                                   | Gemini model ID, e.g. `gemini-3.5-flash-lite` for lower cost |
 | `GEMINI_REQUEST_TIMEOUT` | `120`                                                | Seconds before a Gemini request times out |
+| `PUBLIC_DEMO_MODE`       | `false`                                              | Read-only public demo: disables uploads, deletion, and reindexing; rate-limits model calls |
+| `DEMO_SESSION_REQUEST_LIMIT` | `20`                                             | Demo mode: model calls per browser session per window (a report counts as 10) |
+| `DEMO_GLOBAL_REQUEST_LIMIT`  | `200`                                            | Demo mode: model calls per server process per window, across all visitors |
+| `DEMO_RATE_WINDOW_SECONDS`   | `3600`                                           | Demo mode: length of the rate-limit window |
 | `OLLAMA_BASE_URL`        | `http://localhost:11434`                            | Ollama server URL |
 | `OLLAMA_MODEL`           | `mistral`                                            | Model tag to use for generation |
 | `OLLAMA_TEMPERATURE`     | `0.1`                                                | Generation temperature |
@@ -321,6 +325,33 @@ Community Cloud. Selecting Gemini does **not** require an Ollama server.
 The API key is never logged or displayed, and is excluded from the settings object's
 `repr`. Model IDs change over time; see the
 [Gemini models page](https://ai.google.dev/gemini-api/docs/models) for current ones.
+
+### Public demo mode
+
+For a public deployment (e.g. Streamlit Community Cloud), set `PUBLIC_DEMO_MODE=true`
+(in Streamlit secrets or the environment). It is off by default, so local development
+is unaffected. In demo mode:
+
+- **Read-only documents.** The Knowledge Base shows the indexed collection but hides
+  upload, delete, and reindex controls, and the indexing code refuses to run
+  (`build_index` raises `DemoModeRestriction`). Index the demo corpus before deploying
+  — locally with demo mode off — and ship the `data/raw` PDFs and `vectorstore/`
+  directory with the deployment.
+- **Research stays available:** Dashboard, Semantic Search, Research Assistant,
+  Insights Studio, and Report Builder.
+- **Rate-limited model calls.** Each browser session may make
+  `DEMO_SESSION_REQUEST_LIMIT` calls, and the whole server process
+  `DEMO_GLOBAL_REQUEST_LIMIT` calls, per `DEMO_RATE_WINDOW_SECONDS`. An answer or
+  insight costs 1 call; a report costs one per section (10). Semantic Search makes
+  no model calls and is not limited.
+- **Privacy notice.** Every page shows a demo banner; with Gemini it states that
+  questions and retrieved passages are sent to Google's Gemini API.
+
+Limitations: the limits are in memory, so they reset when the app restarts and are
+per process (not shared across replicas). The per-session limit can be bypassed by
+reloading the page, which starts a new session; the process-wide limit still applies.
+There is no per-IP or per-user tracking and no authentication — set a budget or quota
+on the Gemini API key in Google AI Studio as the hard cost ceiling.
 
 ## 15. Example Research Questions
 

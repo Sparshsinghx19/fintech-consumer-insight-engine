@@ -59,10 +59,21 @@ def _get_env_or_secret(name: str, default: str) -> str:
 
 
 def _get_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
-    if raw is None or raw.strip() == "":
+    """Boolean from the environment (or .env), then Streamlit secrets."""
+    raw = _get_env_or_secret(name, "")
+    if not raw:
         return default
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
+def _get_int_env_or_secret(name: str, default: int) -> int:
+    raw = _get_env_or_secret(name, "")
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"Setting {name}='{raw}' is not a valid integer.")
 
 
 @dataclass(frozen=True)
@@ -76,6 +87,15 @@ class Settings:
     gemini_api_key: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_API_KEY", ""), repr=False)
     gemini_model: str = field(default_factory=lambda: _get_env_or_secret("GEMINI_MODEL", "gemini-3.8-flash"))
     gemini_request_timeout: int = field(default_factory=lambda: _get_int("GEMINI_REQUEST_TIMEOUT", 120))
+
+    # --- Public demo mode (off by default) ---
+    # When on, visitors can't upload, delete, or reindex documents, and LLM
+    # generation is rate-limited per browser session and per server process.
+    public_demo_mode: bool = field(default_factory=lambda: _get_bool("PUBLIC_DEMO_MODE", False))
+    # Model calls allowed per window (a full report counts as one call per section).
+    demo_session_request_limit: int = field(default_factory=lambda: _get_int_env_or_secret("DEMO_SESSION_REQUEST_LIMIT", 20))
+    demo_global_request_limit: int = field(default_factory=lambda: _get_int_env_or_secret("DEMO_GLOBAL_REQUEST_LIMIT", 200))
+    demo_rate_window_seconds: int = field(default_factory=lambda: _get_int_env_or_secret("DEMO_RATE_WINDOW_SECONDS", 3600))
 
     # --- Ollama / LLM ---
     ollama_base_url: str = field(default_factory=lambda: os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"))

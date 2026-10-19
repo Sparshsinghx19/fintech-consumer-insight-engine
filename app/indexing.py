@@ -12,6 +12,7 @@ from typing import Callable, Iterable, Optional
 
 from app.chunking import DocumentChunker
 from app.config import Settings, settings as default_settings
+from app.demo import require_write_access
 from app.ingestion import PDFIngestor
 from app.utils import get_logger
 from app.vector_store import IndexingError, SourceStats, VectorStoreManager
@@ -102,9 +103,12 @@ def build_index(
     re-embeds everything into a staging collection before swapping it in.
 
     Raises IndexingError with a user-facing message on failure; the
-    existing index is never silently destroyed.
+    existing index is never silently destroyed. Raises DemoModeRestriction
+    when PUBLIC_DEMO_MODE is enabled.
     """
     s = settings or default_settings
+    # Server-side guard (the UI also hides these actions in demo mode).
+    require_write_access(s, "Rebuilding the index" if rebuild else "Updating the index")
     try:
         pages, report = PDFIngestor(s).ingest_directory()
         documents = DocumentChunker(s).chunk_pages(pages)

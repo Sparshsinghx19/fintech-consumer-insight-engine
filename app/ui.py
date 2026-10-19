@@ -235,6 +235,17 @@ def privacy_notice(settings: Settings) -> None:
         )
 
 
+def demo_banner(settings: Settings) -> None:
+    """Notice shown above every page in public demo mode."""
+    text = "**Public demo.** The document collection is read-only and usage is rate-limited."
+    if settings.llm_provider == "gemini":
+        text += (
+            " Questions and the retrieved document passages used for each answer are sent to Google's "
+            "Gemini API to generate responses — please don't enter confidential or personal information."
+        )
+    st.info(text, icon=":material/public:")
+
+
 # -- documents ------------------------------------------------------------
 
 

@@ -22,6 +22,7 @@ import streamlit as st
 from app import ui
 from app.config import settings
 from app.indexing import DocumentStatus, REMOVED, build_index as run_build_index, document_statuses
+from app.demo import DemoModeRestriction, SlidingWindowLimiter, format_wait, require_write_access, try_consume
 from app.ingestion import PDFIngestor, save_uploaded_pdf
 from app.insights import DEFAULT_INSIGHT_TOPICS, InsightEngine
 from app.llm import LLMStatus, active_model_name, check_llm_status
@@ -43,6 +44,7 @@ settings.ensure_directories()
 ui.inject_css()
 
 USING_GEMINI = settings.llm_provider == "gemini"
+DEMO_MODE = settings.public_demo_mode
 PROVIDER_NAME = "Gemini" if USING_GEMINI else f"local {settings.ollama_model}"
 RESEARCH_EXAMPLES = [
     "What factors drive digital wallet adoption?",
@@ -140,6 +142,8 @@ def save_new_uploads(uploaded_files) -> None:
     """Save each uploaded file once. The uploader keeps returning the same
     files on every rerun, so already-saved uploads (tracked by file_id) are
     skipped - which also stops a deleted document from being written back."""
+    if blocked_by_demo_mode("Uploading documents"):
+        return
     saved_ids = st.session_state.setdefault("saved_upload_ids", set())
     saved, rejected = [], []
     for uf in uploaded_files:
@@ -168,12 +172,63 @@ def index_is_empty() -> bool:
 
 
 # ----------------------------------------------------------------------
+# Public demo mode
+# ----------------------------------------------------------------------
+@st.cache_resource(show_spinner=False)
+def _global_demo_limiter(limit: int, window_seconds: int) -> SlidingWindowLimiter:
+    # Deliberately shared by all sessions in this server process: it caps the
+    # demo's total model calls. It holds only timestamps, never user content.
+    return SlidingWindowLimiter(limit, window_seconds)
+
+
+def _session_demo_limiter() -> SlidingWindowLimiter:
+    return st.session_state.setdefault(
+        "demo_limiter", SlidingWindowLimiter(settings.demo_session_request_limit, settings.demo_rate_window_seconds)
+    )
+
+
+def consume_generation_quota(cost: int) -> bool:
+    """In public demo mode, reserve `cost` model calls from the session and
+    process-wide limits, or show why not. Always True outside demo mode."""
+    if not DEMO_MODE:
+        return True
+    allowed, wait = try_consume(
+        [
+            _session_demo_limiter(),
+            _global_demo_limiter(settings.demo_global_request_limit, settings.demo_rate_window_seconds),
+        ],
+        cost,
+    )
+    if not allowed:
+        st.error(f"The public demo's usage limit has been reached. Please try again {format_wait(wait)}.")
+    return allowed
+
+
+def demo_quota_caption() -> None:
+    if DEMO_MODE:
+        hours = settings.demo_rate_window_seconds / 3600
+        window = "hour" if hours == 1 else f"{hours:g} hours"
+        st.caption(f"Public demo: {_session_demo_limiter().remaining()} model calls left for this session per {window}.")
+
+
+def blocked_by_demo_mode(action: str) -> bool:
+    """Show an error and return True if `action` is not allowed in demo mode."""
+    try:
+        require_write_access(settings, action)
+    except DemoModeRestriction as exc:
+        st.error(str(exc))
+        return True
+    return False
+
+
+# ----------------------------------------------------------------------
 # Dashboard
 # ----------------------------------------------------------------------
 def page_dashboard() -> None:
     ui.page_header(
         "Dashboard",
-        "Upload FinTech and digital-payments research, search it semantically, and generate "
+        ("Explore a collection of" if DEMO_MODE else "Upload")
+        + " FinTech and digital-payments research, search it semantically, and generate "
         "evidence-grounded answers, consumer insights, and reports with page-level citations.",
     )
     docs = current_documents()
@@ -193,7 +248,11 @@ def page_dashboard() -> None:
     else:
         c4.metric("Index status", "Up to date")
 
-    if not stats:
+    if not stats and DEMO_MODE:
+        st.info("No documents are indexed in this demo yet, so research features have no evidence to work from.")
+    elif pending and DEMO_MODE:
+        st.info("Some documents changed since the demo index was built; results reflect the indexed versions.")
+    elif not stats:
         with st.container(border=True):
             ui.card_marker()
             st.markdown("#### Getting started")
@@ -243,8 +302,13 @@ def page_dashboard() -> None:
 
     st.markdown("#### Quick actions")
     q1, q2, q3 = st.columns(3, gap="medium")
+    first_action = (
+        (q1, "knowledge", "Browse documents", "See the research collection behind this demo.", ":material/folder_open:")
+        if DEMO_MODE
+        else (q1, "knowledge", "Upload research", "Add PDFs and update the index.", ":material/upload_file:")
+    )
     actions = [
-        (q1, "knowledge", "Upload research", "Add PDFs and update the index.", ":material/upload_file:"),
+        first_action,
         (q2, "search", "Search evidence", "Find passages by meaning, with page numbers.", ":material/search:"),
         (q3, "assistant", "Ask a question", "Get an answer grounded in your documents.", ":material/forum:"),
     ]
@@ -259,6 +323,15 @@ def page_dashboard() -> None:
 # Knowledge Base
 # ----------------------------------------------------------------------
 def page_knowledge_base() -> None:
+    if DEMO_MODE:
+        ui.page_header("Knowledge Base", "The research PDFs that answers, insights, and reports in this demo are built from.")
+        st.info(
+            "This public demo's document collection is read-only: uploading, deleting, and reindexing are disabled.",
+            icon=":material/lock:",
+        )
+        render_documents_card(current_documents(), allow_actions=False)
+        return
+
     ui.page_header("Knowledge Base", "Manage the research PDFs that answers, insights, and reports are built from.")
     show_flash()
 
@@ -277,20 +350,7 @@ def page_knowledge_base() -> None:
             save_new_uploads(uploaded)
 
     docs = current_documents()
-    pending = [d for d in docs if d.needs_indexing]
-    with st.container(border=True):
-        ui.card_marker()
-        st.markdown("#### Documents")
-        if not docs:
-            ui.empty_state("No documents yet", "Upload PDFs above, or copy them into the data folder.", ":material/folder_open:")
-        else:
-            on_disk = sum(1 for d in docs if d.status != REMOVED)
-            st.caption(f"{on_disk} file(s) on disk · {sum(1 for d in docs if d.chunks and d.status != REMOVED)} indexed · {len(pending)} need indexing")
-            header = st.columns([4.4, 2.3, 2.6, 1.1, 1.7])
-            for col, title in zip(header, ["File", "Status", "Index details", "Size", ""]):
-                col.markdown(f"<span class='fci-meta'>{title}</span>", unsafe_allow_html=True)
-            for doc in docs:
-                render_document_row(doc)
+    render_documents_card(docs, allow_actions=True)
 
     with st.container(border=True):
         ui.card_marker()
@@ -313,13 +373,39 @@ def page_knowledge_base() -> None:
         render_last_index_run()
 
 
-def render_document_row(doc: DocumentStatus) -> None:
-    name, status, detail, size, action = st.columns([4.4, 2.3, 2.6, 1.1, 1.7], vertical_alignment="center")
+DOCUMENT_COLUMNS = [4.4, 2.3, 2.6, 1.1, 1.7]
+
+
+def render_documents_card(docs: list[DocumentStatus], allow_actions: bool) -> None:
+    pending = [d for d in docs if d.needs_indexing]
+    with st.container(border=True):
+        ui.card_marker()
+        st.markdown("#### Documents")
+        if not docs:
+            hint = "Upload PDFs above, or copy them into the data folder." if allow_actions else "No documents have been added to this demo."
+            ui.empty_state("No documents yet", hint, ":material/folder_open:")
+            return
+        on_disk = sum(1 for d in docs if d.status != REMOVED)
+        indexed = sum(1 for d in docs if d.chunks and d.status != REMOVED)
+        st.caption(f"{on_disk} file(s) on disk · {indexed} indexed · {len(pending)} need indexing")
+        columns = DOCUMENT_COLUMNS if allow_actions else DOCUMENT_COLUMNS[:4]
+        titles = ["File", "Status", "Index details", "Size", ""][: len(columns)]
+        for col, title in zip(st.columns(columns), titles):
+            col.markdown(f"<span class='fci-meta'>{title}</span>", unsafe_allow_html=True)
+        for doc in docs:
+            render_document_row(doc, allow_actions)
+
+
+def render_document_row(doc: DocumentStatus, allow_actions: bool = True) -> None:
+    cells = st.columns(DOCUMENT_COLUMNS if allow_actions else DOCUMENT_COLUMNS[:4], vertical_alignment="center")
+    name, status, detail, size = cells[:4]
     name.markdown(f"**{doc.name}**")
     status.markdown(ui.document_badge(doc), unsafe_allow_html=True)
     detail.markdown(f"<span class='fci-meta'>{ui.document_detail(doc)}</span>", unsafe_allow_html=True)
     size.markdown(f"<span class='fci-meta'>{ui.format_bytes(doc.size_bytes)}</span>", unsafe_allow_html=True)
-    with action:
+    if not allow_actions:
+        return
+    with cells[4]:
         removed = doc.status == REMOVED
         with st.popover("Remove" if removed else "Delete", use_container_width=True):
             if removed:
@@ -333,6 +419,8 @@ def render_document_row(doc: DocumentStatus) -> None:
 
 
 def delete_document(name: str, delete_file: bool) -> None:
+    if blocked_by_demo_mode("Deleting documents"):
+        return
     try:
         removed_chunks = get_vector_store_manager().delete_by_source(name)
     except Exception as exc:  # noqa: BLE001
@@ -357,7 +445,7 @@ def run_indexing(rebuild: bool) -> None:
         st.write("Reading PDFs, chunking text, and computing embeddings locally.")
         try:
             stats = build_index(rebuild=rebuild)
-        except IndexingError as exc:
+        except (IndexingError, DemoModeRestriction) as exc:
             status.update(label="Indexing failed", state="error")
             st.session_state["last_index_run"] = {"error": str(exc), "rebuild": rebuild}
         else:
@@ -511,6 +599,7 @@ def page_assistant() -> None:
                 + (" Cloud inference: the question and retrieved passages are sent to Google's Gemini API." if USING_GEMINI else "")
             )
 
+        demo_quota_caption()
         if submitted and not question.strip():
             st.warning("Enter a research question.")
         request = pending or ({"question": question.strip(), "k": k} if submitted and question.strip() else None)
@@ -525,6 +614,8 @@ def page_assistant() -> None:
 
 
 def run_research(question: str, k: int) -> None:
+    if not consume_generation_quota(1):
+        return
     with st.spinner(f"Retrieving evidence and generating an answer with {PROVIDER_NAME}…"):
         result = RAGChain(retriever=get_retriever(), settings=settings).answer(question, k=k)
     provider = "Gemini API (cloud)" if USING_GEMINI else "Ollama (local)"
@@ -705,11 +796,12 @@ def page_insights() -> None:
             st.rerun()
         if USING_GEMINI:
             st.caption("Cloud inference: the topic and retrieved passages are sent to Google's Gemini API.")
+        demo_quota_caption()
 
     if generate:
         if index_is_empty():
             st.warning("The index is empty; the insight would have no evidence. Add documents in the Knowledge Base first.")
-        else:
+        elif consume_generation_quota(1):
             with st.spinner(f"Retrieving evidence and generating an insight with {PROVIDER_NAME}…"):
                 insight = InsightEngine(retriever=get_retriever(), settings=settings).generate_insight(topic, k=k)
             insights.insert(0, insight)
@@ -738,11 +830,12 @@ def page_reports() -> None:
             + (" — with a local model this can take several minutes." if not USING_GEMINI else "; each sends the topic and retrieved passages to Google's Gemini API.")
         )
         generate = st.button("Generate report", type="primary", disabled=not topic.strip())
+        demo_quota_caption()
 
     if generate:
         if index_is_empty():
             st.warning("The index is empty; the report would have no evidence. Add documents in the Knowledge Base first.")
-        else:
+        elif consume_generation_quota(REPORT_LLM_STEPS):
             progress = st.progress(0.0, text="Starting…")
 
             def on_progress(done: int, total: int, label: str) -> None:
@@ -808,5 +901,8 @@ with st.sidebar:
     st.divider()
     _status = get_llm_status()
     ui.sidebar_provider(settings, active_model_name(settings), _status.reachable, _status.model_available)
+
+if DEMO_MODE:
+    ui.demo_banner(settings)
 
 navigation.run()
